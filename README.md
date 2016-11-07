@@ -1,2 +1,2 @@
 # stick-breaking-vae
-Infinite MIxture Models with VAEs
+Infinite Mixture Models with VAEs
