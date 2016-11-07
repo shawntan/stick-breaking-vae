@@ -28,4 +28,5 @@ def build_sample_pi(size=20):
         neg_log_v = T.log(1 - sample_indiv)
         log_probs = T.dot(neg_log_v, cum_mat) + log_v
         return log_probs
-    return sample_pi
+    return sample_log_pi
+
