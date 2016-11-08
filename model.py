@@ -1,5 +1,6 @@
 import theano
 import theano.tensor as T
+import numpy as np
 
 import lstm
 import vae
@@ -7,6 +8,7 @@ import feedforward
 import stick_break_vae
 
 from theano_toolkit import utils as U
+
 
 def build(P, input_size, hidden_size, latent_size, step_count):
     encode = build_encoder(P, input_size, hidden_size, latent_size, step_count)
@@ -16,6 +18,7 @@ def build(P, input_size, hidden_size, latent_size, step_count):
                            output_size=input_size)
 
     sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
+
     def encode_decode(X):
         z_means, z_stds, alphas = encode(X)
         eps = U.theano_rng.normal(size=z_stds.shape)
@@ -25,13 +28,14 @@ def build(P, input_size, hidden_size, latent_size, step_count):
         return z_means, z_stds, alphas, X_recon, log_pi_samples
     return encode_decode
 
+
 def build_encoder(P, input_size, hidden_size, latent_size, step_count):
 
     P.init_encoder_hidden = np.zeros((hidden_size,))
     P.init_encoder_cell = np.zeros((hidden_size,))
 
     P.w_encoder_v = np.zeros((hidden_size,))
-    P.b_encoder_v = 0
+    P.b_encoder_v = -2
 
     rnn_step = lstm.build_step(P,
                                name="encoder",
@@ -62,10 +66,11 @@ def build_encoder(P, input_size, hidden_size, latent_size, step_count):
         )
 
         _, z_means, z_stds = gaussian_out(hiddens)
-        alphas = T.exp(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
+        alphas = T.nnet.softplus(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
         return z_means, z_stds, alphas
 
     return encode
+
 
 def build_decoder(P, latent_size, hidden_size, output_size):
     decode_ = feedforward.build_classifier(
@@ -90,9 +95,9 @@ def reg_loss(z_means, z_stds, alphas):
             stick_break_vae.kl_divergence(alphas), axis=0)
     return gaussian_loss + stick_break_loss
 
+
 def recon_loss(X, X_mean, log_pi_samples):
     log_p = T.sum(X * T.log(X_mean) + (1 - X) * T.log(1 - X_mean), axis=-1)
     log_pi_t = log_p + log_pi_samples
     k = T.max(log_pi_t, axis=0)
-    return T.log(T.sum(T.exp(log_pi_t - k), axis=0)) + k
-
+    return -(T.log(T.sum(T.exp(log_pi_t - k), axis=0)) + k)
