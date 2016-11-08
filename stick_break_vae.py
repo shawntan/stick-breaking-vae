@@ -19,7 +19,7 @@ def beta_kl_divergence(alpha):
     b = alpha
     return T.log(b) + (1 - b) / b
 
-# KL-divergence between betas 
+# KL-divergence between betas (to be completed...)
 def betas_kl_divergence(alpha1, alpha2, T):
     # Divergence between beta(1, alpha1) and beta(1, alpha2)
     # T is truncation of the power series
@@ -34,6 +34,7 @@ def kl_divergence(alphas):
     return T.sum(beta_kl_divergence(alphas),
                  axis=-1)
 
+# strick breaking construction
 def build_sample_pi(size=20):
     idx = T.arange(size)
     cum_mat = (idx.dimshuffle(0, 'x') <
