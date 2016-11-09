@@ -2,7 +2,6 @@ import theano
 import theano.tensor as T
 import numpy as np
 import math
-import random
 from theano_toolkit.parameters import Parameters
 from theano_toolkit import updates
 from pprint import pprint
@@ -51,7 +50,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         outputs=[vlb, recon_loss, reg_loss,
                  T.max(T.argmax(log_pi_samples, axis=0))],
         updates=updates.adam(parameters, gradients,
-                             learning_rate=1e-4),
+                             learning_rate=2e-5),
         givens={X: train_X[idx * batch_size: (idx + 1) * batch_size]}
     )
 
@@ -72,7 +71,7 @@ if __name__ == "__main__":
     print "Compiling functions..."
     train, validate = prepare_functions(input_size=train_X_data.shape[1],
                                         hidden_size=512,
-                                        latent_size=20,
+                                        latent_size=16,
                                         step_count=10,
                                         batch_size=batch_size,
                                         train_X=train_X,
