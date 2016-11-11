@@ -20,9 +20,7 @@ def build(P, input_size, hidden_size, latent_size, step_count):
     sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
 
     def encode_decode(X):
-        z_means, z_stds, alphas = encode(X)
-        eps = U.theano_rng.normal(size=z_stds.shape)
-        z_samples = z_means + z_stds * eps
+        z_samples, z_means, z_stds, alphas = encode(X)
         log_pi_samples = sample_log_pi(alphas.T).T
         X_recon = decode(z_samples)
         return z_means, z_stds, alphas, X_recon, log_pi_samples
@@ -35,11 +33,11 @@ def build_encoder(P, input_size, hidden_size, latent_size, step_count):
     P.init_encoder_cell = np.zeros((hidden_size,))
 
     P.w_encoder_v = np.zeros((hidden_size,))
-    P.b_encoder_v = -2
+    P.b_encoder_v = 0
 
     rnn_step = lstm.build_step(P,
                                name="encoder",
-                               input_sizes=[input_size],
+                               input_sizes=[input_size, latent_size],
                                hidden_size=hidden_size)
 
     gaussian_out = vae.build_encoder_output(
@@ -53,21 +51,32 @@ def build_encoder(P, input_size, hidden_size, latent_size, step_count):
         init_cell = P.init_encoder_cell
         init_hidden_batch = T.alloc(init_hidden, X.shape[0], hidden_size)
         init_cell_batch = T.alloc(init_cell, X.shape[0], hidden_size)
+        init_latent = U.theano_rng.normal(size=(X.shape[0], latent_size))
+        eps_seq = U.theano_rng.normal(size=(step_count,
+                                            X.shape[0],
+                                            latent_size))
 
-        def step(prev_hidden, prev_cell):
-            hidden, cell = rnn_step(X, prev_hidden, prev_cell)
-            return hidden, cell
+        def step(eps, prev_latent, prev_hidden, prev_cell):
+            hidden, cell = rnn_step(X,
+                                    prev_latent,
+                                    prev_hidden,
+                                    prev_cell)
+            _, z_mean, z_std = gaussian_out(hidden)
+            z_sample = z_mean + eps * z_std
+            return z_sample, hidden, cell, z_mean, z_std
 
-        [hiddens, cells], _ = theano.scan(
+        [z_samples, hiddens, cells, z_means, z_stds], _ = theano.scan(
             step,
-            n_steps=step_count,
-            outputs_info=[init_hidden_batch,
-                          init_cell_batch]
+            sequences=[eps_seq],
+            outputs_info=[init_latent,
+                          init_hidden_batch,
+                          init_cell_batch,
+                          None,
+                          None]
         )
 
-        _, z_means, z_stds = gaussian_out(hiddens)
-        alphas = T.nnet.softplus(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
-        return z_means, z_stds, alphas
+        alphas = T.exp(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
+        return z_samples, z_means, z_stds, alphas
 
     return encode
 

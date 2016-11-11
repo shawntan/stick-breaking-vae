@@ -5,9 +5,40 @@ import math
 from theano_toolkit.parameters import Parameters
 from theano_toolkit import updates
 from pprint import pprint
+import matplotlib
+matplotlib.use('Agg')
 
+import matplotlib.pyplot as plt
 import data
 import model
+
+
+def plot_samples(x, x_samples, max_component):
+    plt.figure(figsize=(20, 20))
+    for i in xrange(10):
+        ax = plt.subplot2grid((13, 13), (i, 0))
+        ax.imshow(x[i].reshape(28, 28), cmap='Greys', interpolation='None')
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.axis('off')
+
+        for j in xrange(10):
+            ax = plt.subplot2grid((13, 13), (i, j + 2))
+            ax.imshow(x_samples[j, i].reshape(28, 28),
+                      cmap='Greys',
+                      interpolation='None')
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            if j == max_component[i]:
+                ax.spines['bottom'].set_color('red')
+                ax.spines['top'].set_color('red')
+                ax.spines['right'].set_color('red')
+                ax.spines['left'].set_color('red')
+            else:
+
+                ax.axis('off')
+    plt.savefig('sample.png', bbox_inches='tight')
+    plt.close()
 
 
 def load_data_frames(filename):
@@ -37,8 +68,8 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     vlb = recon_loss + reg_loss
 
     parameters = P.values()
-    cost = vlb + 1e-4 * sum(T.sum(T.sqr(w))
-                            for w in parameters)
+    cost = vlb # + 1e-3 * sum(T.sum(T.sqr(w))
+               #             for w in parameters)
     gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 5)
 
     print "Updated parameters:"
@@ -50,17 +81,23 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         outputs=[vlb, recon_loss, reg_loss,
                  T.max(T.argmax(log_pi_samples, axis=0))],
         updates=updates.adam(parameters, gradients,
-                             learning_rate=2e-5),
+                             learning_rate=1e-4),
         givens={X: train_X[idx * batch_size: (idx + 1) * batch_size]}
     )
 
     validate = theano.function(
         inputs=[],
-        outputs=[vlb, recon_loss, reg_loss],
+        outputs=vlb,
         givens={X: valid_X}
     )
 
-    return train, validate
+    sample = theano.function(
+        inputs=[],
+        outputs=[X, X_mean, T.argmax(log_pi_samples, axis=0)],
+        givens={X: valid_X[:10]}
+    )
+
+    return train, validate, sample
 
 if __name__ == "__main__":
     epochs = 100
@@ -69,13 +106,14 @@ if __name__ == "__main__":
     train_X, valid_X = load_data_frames('data/mnist.pkl.gz')
     train_X_data = train_X.get_value()
     print "Compiling functions..."
-    train, validate = prepare_functions(input_size=train_X_data.shape[1],
-                                        hidden_size=512,
-                                        latent_size=16,
-                                        step_count=10,
-                                        batch_size=batch_size,
-                                        train_X=train_X,
-                                        valid_X=valid_X)
+    train, validate, sample = prepare_functions(
+        input_size=train_X_data.shape[1],
+        hidden_size=256,
+        latent_size=16,
+        step_count=10,
+        batch_size=batch_size,
+        train_X=train_X,
+        valid_X=valid_X)
 
     batches = int(math.ceil(train_X_data.shape[0] / float(batch_size)))
     print "Starting training..."
@@ -85,3 +123,7 @@ if __name__ == "__main__":
         for i in xrange(batches):
             vals = train(i)
             print ' '.join(map(str, vals))
+        vlb = validate()
+        x, x_samples, max_component = sample()
+        plot_samples(x, x_samples, max_component)
+        print vlb
