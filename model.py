@@ -10,24 +10,23 @@ import stick_break_vae
 from theano_toolkit import utils as U
 
 
-def build(P, input_size, hidden_size, latent_size, step_count):
-    encode = build_encoder(P, input_size, hidden_size, latent_size, step_count)
+def build(P, input_size, hidden_size, latent_size):
+    encode = build_encoder(P, input_size, hidden_size, latent_size)
     decode = build_decoder(P,
                            latent_size=latent_size,
                            hidden_size=hidden_size,
                            output_size=input_size)
 
-    sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
-
-    def encode_decode(X):
-        z_samples, z_means, z_stds, alphas = encode(X)
+    def encode_decode(X, step_count):
+        sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
+        z_samples, z_means, z_stds, alphas = encode(X, step_count)
         log_pi_samples = sample_log_pi(alphas.T).T
         X_recon = decode(z_samples)
         return z_means, z_stds, alphas, X_recon, log_pi_samples
     return encode_decode
 
 
-def build_encoder(P, input_size, hidden_size, latent_size, step_count):
+def build_encoder(P, input_size, hidden_size, latent_size):
 
     P.init_encoder_hidden = np.zeros((hidden_size,))
     P.init_encoder_cell = np.zeros((hidden_size,))
@@ -46,7 +45,7 @@ def build_encoder(P, input_size, hidden_size, latent_size, step_count):
             output_size=latent_size,
             initialise_weights=None)
 
-    def encode(X):
+    def encode(X, step_count):
         init_hidden = T.tanh(P.init_encoder_hidden)
         init_cell = P.init_encoder_cell
         init_hidden_batch = T.alloc(init_hidden, X.shape[0], hidden_size)
@@ -75,7 +74,7 @@ def build_encoder(P, input_size, hidden_size, latent_size, step_count):
                           None]
         )
 
-        alphas = T.exp(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
+        alphas = T.nnet.softplus(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
         return z_samples, z_means, z_stds, alphas
 
     return encode
@@ -102,7 +101,7 @@ def reg_loss(z_means, z_stds, alphas):
             vae.kl_divergence(z_means, z_stds, 0, 1), axis=0)
     stick_break_loss = T.sum(
             stick_break_vae.kl_divergence(alphas), axis=0)
-    return gaussian_loss + stick_break_loss
+    return gaussian_loss #+ stick_break_loss
 
 
 def recon_loss(X, X_mean, log_pi_samples):

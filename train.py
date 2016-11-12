@@ -56,20 +56,21 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     encode_decode = model.build(P,
                                 input_size=input_size,
                                 hidden_size=hidden_size,
-                                latent_size=latent_size,
-                                step_count=step_count)
+                                latent_size=latent_size)
     P.W_decoder_input_0.set_value(
         P.W_decoder_input_0.get_value() * 10)
 
     X = T.matrix('X')
-    Z_means, Z_stds, alphas, X_mean, log_pi_samples = encode_decode(X)
+    step_count = T.iscalar('step_count')
+    Z_means, Z_stds, alphas, \
+        X_mean, log_pi_samples = encode_decode(X, step_count=step_count)
     recon_loss = T.mean(model.recon_loss(X, X_mean, log_pi_samples), axis=0)
     reg_loss = T.mean(model.reg_loss(Z_means, Z_stds, alphas), axis=0)
     vlb = recon_loss + reg_loss
 
     parameters = P.values()
-    cost = vlb # + 1e-3 * sum(T.sum(T.sqr(w))
-               #             for w in parameters)
+    cost = vlb + 1e-3 * sum(T.sum(T.sqr(w))
+                            for w in parameters)
     gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 5)
 
     print "Updated parameters:"
@@ -77,7 +78,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     idx = T.iscalar('idx')
 
     train = theano.function(
-        inputs=[idx],
+        inputs=[idx, step_count],
         outputs=[vlb, recon_loss, reg_loss,
                  T.max(T.argmax(log_pi_samples, axis=0))],
         updates=updates.adam(parameters, gradients,
@@ -88,13 +89,13 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     validate = theano.function(
         inputs=[],
         outputs=vlb,
-        givens={X: valid_X}
+        givens={X: valid_X, step_count: np.int32(10)}
     )
 
     sample = theano.function(
         inputs=[],
         outputs=[X, X_mean, T.argmax(log_pi_samples, axis=0)],
-        givens={X: valid_X[:10]}
+        givens={X: valid_X[:10], step_count: np.int32(10)}
     )
 
     return train, validate, sample
@@ -108,7 +109,7 @@ if __name__ == "__main__":
     print "Compiling functions..."
     train, validate, sample = prepare_functions(
         input_size=train_X_data.shape[1],
-        hidden_size=256,
+        hidden_size=64,
         latent_size=16,
         step_count=10,
         batch_size=batch_size,
@@ -117,13 +118,21 @@ if __name__ == "__main__":
 
     batches = int(math.ceil(train_X_data.shape[0] / float(batch_size)))
     print "Starting training..."
+    best_score = np.inf
     for epoch in xrange(epochs):
+        vlb = validate()
+        print vlb,
+        if vlb < best_score:
+            x, x_samples, max_component = sample()
+            plot_samples(x, x_samples, max_component)
+            best_score = vlb
+            print "Saved."
+        else:
+            print
+
         np.random.shuffle(train_X_data)
         train_X.set_value(train_X_data)
         for i in xrange(batches):
-            vals = train(i)
+            steps = np.random.randint(1, 11)
+            vals = train(i, 10)
             print ' '.join(map(str, vals))
-        vlb = validate()
-        x, x_samples, max_component = sample()
-        plot_samples(x, x_samples, max_component)
-        print vlb
