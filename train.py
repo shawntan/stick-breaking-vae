@@ -3,6 +3,7 @@ import theano.tensor as T
 import numpy as np
 import math
 from theano_toolkit.parameters import Parameters
+from theano_toolkit import hinton
 from theano_toolkit import updates
 from pprint import pprint
 import matplotlib
@@ -94,7 +95,9 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
 
     sample = theano.function(
         inputs=[],
-        outputs=[X, X_mean, T.argmax(log_pi_samples, axis=0)],
+        outputs=[X, X_mean,
+                 T.argmax(log_pi_samples, axis=0),
+                 T.exp(log_pi_samples)],
         givens={X: valid_X[:10], step_count: np.int32(10)}
     )
 
@@ -123,10 +126,12 @@ if __name__ == "__main__":
         vlb = validate()
         print vlb,
         if vlb < best_score:
-            x, x_samples, max_component = sample()
+            x, x_samples, max_component, pi_samples = sample()
             plot_samples(x, x_samples, max_component)
             best_score = vlb
             print "Saved."
+            hinton.plot(pi_samples.T)
+            print np.sum(pi_samples, axis=0)
         else:
             print
 

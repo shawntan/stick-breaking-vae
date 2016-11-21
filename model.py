@@ -51,17 +51,22 @@ def build_encoder(P, input_size, hidden_size, latent_size):
         init_hidden_batch = T.alloc(init_hidden, X.shape[0], hidden_size)
         init_cell_batch = T.alloc(init_cell, X.shape[0], hidden_size)
         init_latent = U.theano_rng.normal(size=(X.shape[0], latent_size))
+        init_z_mean = T.zeros_like(init_latent)
+        init_z_std = T.ones_like(init_latent)
         eps_seq = U.theano_rng.normal(size=(step_count,
                                             X.shape[0],
                                             latent_size))
 
-        def step(eps, prev_latent, prev_hidden, prev_cell):
+        def step(eps, prev_latent,
+                 prev_hidden, prev_cell, prev_z_mean, prev_z_std):
             hidden, cell = rnn_step(X,
                                     prev_latent,
                                     prev_hidden,
                                     prev_cell)
-            _, z_mean, z_std = gaussian_out(hidden)
-            z_sample = z_mean + eps * z_std
+            _, curr_z_mean, curr_z_std = gaussian_out(hidden)
+            z_mean = curr_z_mean
+            z_std = curr_z_std
+            z_sample = z_mean + eps * z_std + prev_latent
             return z_sample, hidden, cell, z_mean, z_std
 
         [z_samples, hiddens, cells, z_means, z_stds], _ = theano.scan(
@@ -70,11 +75,12 @@ def build_encoder(P, input_size, hidden_size, latent_size):
             outputs_info=[init_latent,
                           init_hidden_batch,
                           init_cell_batch,
-                          None,
-                          None]
+                          init_z_mean,
+                          init_z_std]
         )
 
-        alphas = T.nnet.softplus(T.dot(hiddens, P.w_encoder_v) + P.b_encoder_v)
+        alphas = T.exp(T.dot(hiddens, P.w_encoder_v) +
+                                 P.b_encoder_v + 5)
         return z_samples, z_means, z_stds, alphas
 
     return encode
@@ -101,11 +107,13 @@ def reg_loss(z_means, z_stds, alphas):
             vae.kl_divergence(z_means, z_stds, 0, 1), axis=0)
     stick_break_loss = T.sum(
             stick_break_vae.kl_divergence(alphas), axis=0)
-    return gaussian_loss #+ stick_break_loss
+    return gaussian_loss + stick_break_loss
 
 
 def recon_loss(X, X_mean, log_pi_samples):
     log_p = T.sum(X * T.log(X_mean) + (1 - X) * T.log(1 - X_mean), axis=-1)
-    log_pi_t = log_p + log_pi_samples
-    k = T.max(log_pi_t, axis=0)
-    return -(T.log(T.sum(T.exp(log_pi_t - k), axis=0)) + k)
+    k_p = T.max(log_p, axis=0)
+    k_pi = T.max(log_pi_samples, axis=0)
+    return -(T.log(T.sum(T.exp(
+                log_p + log_pi_samples - k_p - k_pi), axis=0)) +
+             k_p + k_pi)
