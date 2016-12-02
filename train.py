@@ -46,8 +46,8 @@ def load_data_frames(filename):
     (data_train_X, _), \
         (data_valid_X, _), _ = data.load('data/mnist.pkl.gz')
 
-    train_X = theano.shared(data_train_X)
-    valid_X = theano.shared(data_valid_X)
+    train_X = theano.shared(data_train_X.astype(np.float32))
+    valid_X = theano.shared(data_valid_X.astype(np.float32))
     return train_X, valid_X
 
 
@@ -62,16 +62,25 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         P.W_decoder_input_0.get_value() * 10)
 
     X = T.matrix('X')
-    step_count = T.iscalar('step_count')
-    Z_means, Z_stds, alphas, \
-        X_mean, log_pi_samples = encode_decode(X, step_count=step_count)
-    recon_loss = T.mean(model.recon_loss(X, X_mean, log_pi_samples), axis=0)
-    reg_loss = T.mean(model.reg_loss(Z_means, Z_stds, alphas), axis=0)
-    vlb = recon_loss + reg_loss
-
+    step_count = 10
     parameters = P.values()
-    cost = vlb + 1e-3 * sum(T.sum(T.sqr(w))
-                            for w in parameters)
+
+    cost_symbs = []
+    for s in xrange(step_count):
+        Z_means, Z_stds, alphas, \
+            X_mean, log_pi_samples = encode_decode(X, step_count=s + 1)
+        batch_recon_loss, log_p = model.recon_loss(X, X_mean, log_pi_samples)
+        recon_loss = T.mean(batch_recon_loss, axis=0)
+        reg_loss = T.mean(model.reg_loss(Z_means, Z_stds, alphas), axis=0)
+        vlb = recon_loss + reg_loss
+        corr = T.mean(T.eq(T.argmax(log_p, axis=0),
+                      T.argmax(log_pi_samples, axis=0)), axis=0)
+        cost = cost_symbs.append(vlb)
+
+    avg_cost = sum(cost_symbs) / step_count
+    cost = avg_cost + 1e-3 * sum(T.sum(T.sqr(w))
+                                 for w in parameters)
+
     gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 5)
 
     print "Updated parameters:"
@@ -79,9 +88,9 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     idx = T.iscalar('idx')
 
     train = theano.function(
-        inputs=[idx, step_count],
+        inputs=[idx],
         outputs=[vlb, recon_loss, reg_loss,
-                 T.max(T.argmax(log_pi_samples, axis=0))],
+                 T.max(T.argmax(log_pi_samples, axis=0)), corr],
         updates=updates.adam(parameters, gradients,
                              learning_rate=1e-4),
         givens={X: train_X[idx * batch_size: (idx + 1) * batch_size]}
@@ -90,7 +99,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     validate = theano.function(
         inputs=[],
         outputs=vlb,
-        givens={X: valid_X, step_count: np.int32(10)}
+        givens={X: valid_X}
     )
 
     sample = theano.function(
@@ -98,7 +107,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         outputs=[X, X_mean,
                  T.argmax(log_pi_samples, axis=0),
                  T.exp(log_pi_samples)],
-        givens={X: valid_X[:10], step_count: np.int32(10)}
+        givens={X: valid_X[:10]}
     )
 
     return train, validate, sample
@@ -134,10 +143,8 @@ if __name__ == "__main__":
             print np.sum(pi_samples, axis=0)
         else:
             print
-
         np.random.shuffle(train_X_data)
         train_X.set_value(train_X_data)
         for i in xrange(batches):
-            steps = np.random.randint(1, 11)
-            vals = train(i, 10)
+            vals = train(i)
             print ' '.join(map(str, vals))

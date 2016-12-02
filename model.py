@@ -20,10 +20,22 @@ def build(P, input_size, hidden_size, latent_size):
     def encode_decode(X, step_count):
         sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
         z_samples, z_means, z_stds, alphas = encode(X, step_count)
-        log_pi_samples = sample_log_pi(alphas.T).T
+        log_pi_samples = sharpen(sample_log_pi(alphas.T).T, 4)
         X_recon = decode(z_samples)
         return z_means, z_stds, alphas, X_recon, log_pi_samples
     return encode_decode
+
+
+def sharpen(log_probs, factor, axis=0):
+    if factor == 1:
+        return log_probs
+    log_scaled = log_probs * factor
+    k = T.max(log_scaled, axis=axis, keepdims=True)
+    log_scaled_normed = log_scaled - k
+    scaled = T.exp(log_scaled_normed)
+    norm_scaled = (log_scaled_normed -
+                   T.log(T.sum(scaled, axis=axis, keepdims=True)))
+    return norm_scaled
 
 
 def build_encoder(P, input_size, hidden_size, latent_size):
@@ -66,7 +78,7 @@ def build_encoder(P, input_size, hidden_size, latent_size):
             _, curr_z_mean, curr_z_std = gaussian_out(hidden)
             z_mean = curr_z_mean
             z_std = curr_z_std
-            z_sample = z_mean + eps * z_std + prev_latent
+            z_sample = z_mean + eps * z_std
             return z_sample, hidden, cell, z_mean, z_std
 
         [z_samples, hiddens, cells, z_means, z_stds], _ = theano.scan(
@@ -80,7 +92,7 @@ def build_encoder(P, input_size, hidden_size, latent_size):
         )
 
         alphas = T.exp(T.dot(hiddens, P.w_encoder_v) +
-                                 P.b_encoder_v + 5)
+                       P.b_encoder_v + 5)
         return z_samples, z_means, z_stds, alphas
 
     return encode
@@ -106,14 +118,14 @@ def reg_loss(z_means, z_stds, alphas):
     gaussian_loss = T.sum(
             vae.kl_divergence(z_means, z_stds, 0, 1), axis=0)
     stick_break_loss = T.sum(
-            stick_break_vae.kl_divergence(alphas), axis=0)
+            stick_break_vae.kl_divergence(alphas[:-1]), axis=0)
     return gaussian_loss + stick_break_loss
 
 
 def recon_loss(X, X_mean, log_pi_samples):
-    log_p = T.sum(X * T.log(X_mean) + (1 - X) * T.log(1 - X_mean), axis=-1)
-    k_p = T.max(log_p, axis=0)
-    k_pi = T.max(log_pi_samples, axis=0)
-    return -(T.log(T.sum(T.exp(
-                log_p + log_pi_samples - k_p - k_pi), axis=0)) +
-             k_p + k_pi)
+    log_p = T.sum(T.switch(X, T.log(X_mean), T.log(1 - X_mean)), axis=-1)
+    k = T.max(log_p + log_pi_samples, axis=0)
+    norm_p = T.exp(log_p + log_pi_samples - k)
+    return -(T.log(T.sum(
+                T.switch(norm_p < 1e-6, 0, norm_p),
+             axis=0)) + k), log_p
