@@ -20,7 +20,7 @@ def build(P, input_size, hidden_size, latent_size):
     def encode_decode(X, step_count):
         sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
         z_samples, z_means, z_stds, alphas = encode(X, step_count)
-        log_pi_samples = sharpen(sample_log_pi(alphas.T).T, 4)
+        log_pi_samples = sharpen(sample_log_pi(alphas.T).T, 1)
         X_recon = decode(z_samples)
         return z_means, z_stds, alphas, X_recon, log_pi_samples
     return encode_decode
@@ -42,10 +42,6 @@ def build_encoder(P, input_size, hidden_size, latent_size):
 
     P.init_encoder_hidden = np.zeros((hidden_size,))
     P.init_encoder_cell = np.zeros((hidden_size,))
-
-    P.w_encoder_v = np.zeros((hidden_size,))
-    P.b_encoder_v = 0
-
     rnn_step = lstm.build_step(P,
                                name="encoder",
                                input_sizes=[input_size, latent_size],
@@ -56,6 +52,16 @@ def build_encoder(P, input_size, hidden_size, latent_size):
             input_size=hidden_size,
             output_size=latent_size,
             initialise_weights=None)
+
+    compute_v_hidden = feedforward.build_combine_transform(
+            P, name="compute_v_hidden",
+            input_sizes=[hidden_size, latent_size, input_size],
+            output_size=hidden_size // 2,
+            initial_weights=feedforward.initial_weights,
+            activation=T.tanh)
+
+    P.w_encoder_v = np.zeros((hidden_size // 2,))
+    P.b_encoder_v = 0
 
     def encode(X, step_count):
         init_hidden = T.tanh(P.init_encoder_hidden)
@@ -79,37 +85,56 @@ def build_encoder(P, input_size, hidden_size, latent_size):
             z_mean = curr_z_mean
             z_std = curr_z_std
             z_sample = z_mean + eps * z_std
-            return z_sample, hidden, cell, z_mean, z_std
+            v_hidden = compute_v_hidden([hidden, z_sample, X])
+            alpha = T.nnet.softplus(T.dot(v_hidden, P.w_encoder_v) +
+                                    P.b_encoder_v - 2)
 
-        [z_samples, hiddens, cells, z_means, z_stds], _ = theano.scan(
+            return alpha, z_sample, hidden, cell, z_mean, z_std
+        [alphas, z_samples, hiddens, cells, z_means, z_stds], _ = theano.scan(
             step,
             sequences=[eps_seq],
-            outputs_info=[init_latent,
+            outputs_info=[None,
+                          init_latent,
                           init_hidden_batch,
                           init_cell_batch,
                           init_z_mean,
                           init_z_std]
         )
-
-        alphas = T.exp(T.dot(hiddens, P.w_encoder_v) +
-                       P.b_encoder_v + 5)
         return z_samples, z_means, z_stds, alphas
 
     return encode
 
 
 def build_decoder(P, latent_size, hidden_size, output_size):
-    decode_ = feedforward.build_classifier(
-        P, name='decoder',
-        input_sizes=[latent_size],
-        hidden_sizes=[hidden_size],
-        output_size=output_size,
-        initial_weights=feedforward.relu_init,
-        activation=T.nnet.softplus,
-        output_activation=T.nnet.sigmoid)
+    P.init_decoder_hidden = np.zeros((hidden_size,))
+    P.init_decoder_cell = np.zeros((hidden_size,))
+    output = feedforward.build_transform(
+        P, "decoder_output", hidden_size, output_size,
+        initial_weights=lambda x, y: np.zeros((x, y)),
+        activation=T.nnet.sigmoid
+    )
+    rnn_step = lstm.build_step(P,
+                               name="decoder",
+                               input_sizes=[latent_size],
+                               hidden_size=hidden_size)
 
-    def decode(X):
-        return decode_([X])[1]
+    def decode(Z):
+        init_hidden = T.tanh(P.init_encoder_hidden)
+        init_cell = P.init_encoder_cell
+        init_hidden_batch = T.alloc(init_hidden, Z.shape[1], hidden_size)
+        init_cell_batch = T.alloc(init_cell, Z.shape[1], hidden_size)
+
+        def step(z, prev_hidden, prev_cell):
+            hidden, cell = rnn_step(z, prev_hidden, prev_cell)
+            return hidden, cell
+
+        [hiddens, _], _ = theano.scan(
+            step,
+            sequences=[Z],
+            outputs_info=[init_hidden_batch,
+                          init_cell_batch]
+        )
+        return output(hiddens)
 
     return decode
 
@@ -129,3 +154,4 @@ def recon_loss(X, X_mean, log_pi_samples):
     return -(T.log(T.sum(
                 T.switch(norm_p < 1e-6, 0, norm_p),
              axis=0)) + k), log_p
+

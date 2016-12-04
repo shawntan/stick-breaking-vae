@@ -59,10 +59,9 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
                                 hidden_size=hidden_size,
                                 latent_size=latent_size)
     P.W_decoder_input_0.set_value(
-        P.W_decoder_input_0.get_value() * 10)
+        P.W_decoder_input_0.get_value())
 
     X = T.matrix('X')
-    step_count = 10
     parameters = P.values()
 
     cost_symbs = []
@@ -78,10 +77,10 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         cost = cost_symbs.append(vlb)
 
     avg_cost = sum(cost_symbs) / step_count
-    cost = avg_cost + 1e-3 * sum(T.sum(T.sqr(w))
-                                 for w in parameters)
+    cost = avg_cost + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
+#    cost = cost_symbs[-1] + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
 
-    gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 5)
+    gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 1)
 
     print "Updated parameters:"
     pprint(parameters)
@@ -92,7 +91,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         outputs=[vlb, recon_loss, reg_loss,
                  T.max(T.argmax(log_pi_samples, axis=0)), corr],
         updates=updates.adam(parameters, gradients,
-                             learning_rate=1e-4),
+                             learning_rate=3e-4),
         givens={X: train_X[idx * batch_size: (idx + 1) * batch_size]}
     )
 
@@ -110,7 +109,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         givens={X: valid_X[:10]}
     )
 
-    return train, validate, sample
+    return P, train, validate, sample
 
 if __name__ == "__main__":
     epochs = 100
@@ -119,11 +118,11 @@ if __name__ == "__main__":
     train_X, valid_X = load_data_frames('data/mnist.pkl.gz')
     train_X_data = train_X.get_value()
     print "Compiling functions..."
-    train, validate, sample = prepare_functions(
+    P, train, validate, sample = prepare_functions(
         input_size=train_X_data.shape[1],
-        hidden_size=64,
-        latent_size=16,
-        step_count=10,
+        hidden_size=200,
+        latent_size=2,
+        step_count=15,
         batch_size=batch_size,
         train_X=train_X,
         valid_X=valid_X)
@@ -141,10 +140,11 @@ if __name__ == "__main__":
             print "Saved."
             hinton.plot(pi_samples.T)
             print np.sum(pi_samples, axis=0)
+            P.save('model.pkl')
         else:
             print
         np.random.shuffle(train_X_data)
         train_X.set_value(train_X_data)
         for i in xrange(batches):
             vals = train(i)
-            print ' '.join(map(str, vals))
+#            print ' '.join(map(str, vals))
