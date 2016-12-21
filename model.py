@@ -10,12 +10,18 @@ import stick_break_vae
 from theano_toolkit import utils as U
 
 
-def build(P, input_size, hidden_size, latent_size):
+def build_encoder_decoder(P, input_size, hidden_size, latent_size):
     encode = build_encoder(P, input_size, hidden_size, latent_size)
     decode = build_decoder(P,
                            latent_size=latent_size,
                            hidden_size=hidden_size,
                            output_size=input_size)
+    return encode, decode
+
+
+def build(P, input_size, hidden_size, latent_size):
+    encode, decode = build_encoder_decoder(
+        P, input_size, hidden_size, latent_size)
 
     def encode_decode(X, step_count):
         sample_log_pi = stick_break_vae.build_sample_pi(size=step_count)
@@ -23,7 +29,7 @@ def build(P, input_size, hidden_size, latent_size):
         log_pi_samples = sharpen(sample_log_pi(alphas.T).T, 1)
         X_recon = decode(z_samples)
         return z_means, z_stds, alphas, X_recon, log_pi_samples
-    return encode_decode
+    return encode_decode, encode, decode
 
 
 def sharpen(log_probs, factor, axis=0):
@@ -151,7 +157,4 @@ def recon_loss(X, X_mean, log_pi_samples):
     log_p = T.sum(T.switch(X, T.log(X_mean), T.log(1 - X_mean)), axis=-1)
     k = T.max(log_p + log_pi_samples, axis=0)
     norm_p = T.exp(log_p + log_pi_samples - k)
-    return -(T.log(T.sum(
-                T.switch(norm_p < 1e-6, 0, norm_p),
-             axis=0)) + k), log_p
-
+    return -(T.log(T.sum(norm_p, axis=0)) + k), log_p

@@ -12,6 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import data
 import model
+import evaluate
 
 
 def plot_samples(x, x_samples, max_component):
@@ -44,7 +45,7 @@ def plot_samples(x, x_samples, max_component):
 
 def load_data_frames(filename):
     (data_train_X, _), \
-        (data_valid_X, _), _ = data.load('data/mnist.pkl.gz')
+        _, (data_valid_X, _) = data.load('data/mnist.pkl.gz')
 
     train_X = theano.shared(data_train_X.astype(np.float32))
     valid_X = theano.shared(data_valid_X.astype(np.float32))
@@ -54,10 +55,11 @@ def load_data_frames(filename):
 def prepare_functions(input_size, hidden_size, latent_size, step_count,
                       batch_size, train_X, valid_X):
     P = Parameters()
-    encode_decode = model.build(P,
-                                input_size=input_size,
-                                hidden_size=hidden_size,
-                                latent_size=latent_size)
+    encode_decode, \
+        encode, decode = model.build(P,
+                                     input_size=input_size,
+                                     hidden_size=hidden_size,
+                                     latent_size=latent_size)
     P.W_decoder_input_0.set_value(
         P.W_decoder_input_0.get_value())
 
@@ -69,6 +71,10 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         Z_means, Z_stds, alphas, \
             X_mean, log_pi_samples = encode_decode(X, step_count=s + 1)
         batch_recon_loss, log_p = model.recon_loss(X, X_mean, log_pi_samples)
+        log_p_X = evaluate.estimated_marginal_likelihood(X, encode, decode,
+                                                         step_count=15,
+                                                         sample_count=40)
+
         recon_loss = T.mean(batch_recon_loss, axis=0)
         reg_loss = T.mean(model.reg_loss(Z_means, Z_stds, alphas), axis=0)
         vlb = recon_loss + reg_loss
@@ -76,10 +82,10 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
                       T.argmax(log_pi_samples, axis=0)), axis=0)
         cost = cost_symbs.append(vlb)
 
-    avg_cost = sum(cost_symbs) / step_count
-    cost = avg_cost + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
-#    cost = cost_symbs[-1] + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
-
+#    avg_cost = sum(cost_symbs) / step_count
+#    cost = avg_cost + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
+    cost = cost_symbs[-1] + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
+    print "Computing gradients ..."
     gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 1)
 
     print "Updated parameters:"
@@ -95,11 +101,21 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
         givens={X: train_X[idx * batch_size: (idx + 1) * batch_size]}
     )
 
-    validate = theano.function(
-        inputs=[],
-        outputs=vlb,
-        givens={X: valid_X}
+    print "Compiling functions..."
+    _validate = theano.function(
+        inputs=[idx],
+        outputs=-log_p_X,
+        givens={X: valid_X[idx * batch_size: (idx + 1) * batch_size]}
     )
+
+    vbatches = int(math.ceil(valid_X.get_value().shape[0] / float(batch_size)))
+
+    def validate():
+        total = 0
+        for i in xrange(vbatches):
+            val = _validate(i)
+            total += val
+        return total / vbatches
 
     sample = theano.function(
         inputs=[],
@@ -112,12 +128,11 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     return P, train, validate, sample
 
 if __name__ == "__main__":
-    epochs = 100
-    batch_size = 32
+    epochs = 200
+    batch_size = 64
     print "Loading data..."
     train_X, valid_X = load_data_frames('data/mnist.pkl.gz')
     train_X_data = train_X.get_value()
-    print "Compiling functions..."
     P, train, validate, sample = prepare_functions(
         input_size=train_X_data.shape[1],
         hidden_size=200,
@@ -130,9 +145,18 @@ if __name__ == "__main__":
     batches = int(math.ceil(train_X_data.shape[0] / float(batch_size)))
     print "Starting training..."
     best_score = np.inf
+    P.load('model.pkl')
     for epoch in xrange(epochs):
         vlb = validate()
         print vlb,
+        vlb = validate()
+        print vlb,
+        vlb = validate()
+        print vlb,
+        vlb = validate()
+        print vlb,
+
+        exit()
         if vlb < best_score:
             x, x_samples, max_component, pi_samples = sample()
             plot_samples(x, x_samples, max_component)
@@ -147,4 +171,4 @@ if __name__ == "__main__":
         train_X.set_value(train_X_data)
         for i in xrange(batches):
             vals = train(i)
-#            print ' '.join(map(str, vals))
+            # print ' '.join(map(str, vals))

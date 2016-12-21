@@ -34,3 +34,19 @@ def build_sample_pi(size=20):
         log_probs = T.dot(neg_log_v, cum_mat) + log_v
         return log_probs
     return sample_log_pi
+
+
+def build_sample_pi_(size=20):
+    # strick breaking construction
+    idx = T.arange(size)
+    cum_mat = (idx.dimshuffle(0, 'x') <
+               idx.dimshuffle('x', 0))
+
+    def sample_log_pi(alphas):
+        sample_indiv = beta_sample(alphas)
+        log_v = T.log(sample_indiv)
+        log_v = T.set_subtensor(log_v[:, -1], 0)
+        neg_log_v = T.log(1 - sample_indiv)
+        log_probs = T.dot(neg_log_v, cum_mat) + log_v
+        return sample_indiv, log_probs
+    return sample_log_pi
