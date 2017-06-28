@@ -45,11 +45,16 @@ def plot_samples(x, x_samples, max_component):
 
 def load_data_frames(filename):
     (data_train_X, _), \
-        _, (data_valid_X, _) = data.load('data/mnist.pkl.gz')
+        (data_valid_X, _), _ = data.load('data/mnist.pkl.gz')
 
     train_X = theano.shared(data_train_X.astype(np.float32))
     valid_X = theano.shared(data_valid_X.astype(np.float32))
     return train_X, valid_X
+
+
+def load_test_set(filename):
+    _, _, (data_test, _) = data.load('data/mnist.pkl.gz')
+    return data_test
 
 
 def prepare_functions(input_size, hidden_size, latent_size, step_count,
@@ -67,13 +72,14 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     parameters = P.values()
 
     cost_symbs = []
+    log_p_X = evaluate.estimated_marginal_likelihood(X, encode, decode,
+                                                     step_count=15,
+                                                     sample_count=40)
+
     for s in xrange(step_count):
         Z_means, Z_stds, alphas, \
             X_mean, log_pi_samples = encode_decode(X, step_count=s + 1)
         batch_recon_loss, log_p = model.recon_loss(X, X_mean, log_pi_samples)
-        log_p_X = evaluate.estimated_marginal_likelihood(X, encode, decode,
-                                                         step_count=15,
-                                                         sample_count=40)
 
         recon_loss = T.mean(batch_recon_loss, axis=0)
         reg_loss = T.mean(model.reg_loss(Z_means, Z_stds, alphas), axis=0)
@@ -84,7 +90,7 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
 
 #    avg_cost = sum(cost_symbs) / step_count
 #    cost = avg_cost + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
-    cost = cost_symbs[-1] + 1e-3 * sum(T.sum(T.sqr(w)) for w in parameters)
+    cost = cost_symbs[-1] + 1e-4 * sum(T.sum(T.sqr(w)) for w in parameters)
     print "Computing gradients ..."
     gradients = updates.clip_deltas(T.grad(cost, wrt=parameters), 1)
 
@@ -128,35 +134,33 @@ def prepare_functions(input_size, hidden_size, latent_size, step_count,
     return P, train, validate, sample
 
 if __name__ == "__main__":
-    epochs = 200
-    batch_size = 64
+    epochs = 1000
+    batch_size = 32
     print "Loading data..."
     train_X, valid_X = load_data_frames('data/mnist.pkl.gz')
     train_X_data = train_X.get_value()
     P, train, validate, sample = prepare_functions(
         input_size=train_X_data.shape[1],
-        hidden_size=200,
-        latent_size=2,
-        step_count=15,
+        hidden_size=128,
+        latent_size=1,
+        step_count=20,
         batch_size=batch_size,
         train_X=train_X,
-        valid_X=valid_X)
-
+        valid_X=valid_X
+    )
     batches = int(math.ceil(train_X_data.shape[0] / float(batch_size)))
     print "Starting training..."
     best_score = np.inf
-    P.load('model.pkl')
+    # P.load('model.pkl')
     for epoch in xrange(epochs):
+        tries = 0
         vlb = validate()
-        print vlb,
-        vlb = validate()
-        print vlb,
-        vlb = validate()
-        print vlb,
-        vlb = validate()
-        print vlb,
+        while np.isnan(vlb) and tries < 5:
+            vlb = validate()
+            tries += 1
+            print "try",
 
-        exit()
+        print vlb,
         if vlb < best_score:
             x, x_samples, max_component, pi_samples = sample()
             plot_samples(x, x_samples, max_component)
@@ -171,4 +175,16 @@ if __name__ == "__main__":
         train_X.set_value(train_X_data)
         for i in xrange(batches):
             vals = train(i)
-            # print ' '.join(map(str, vals))
+            print ' '.join(map(str, vals))
+
+    P.load('model.pkl')
+    print "Test:",
+    test_X_data = load_test_set('data/mnist.pkl.gz')
+    valid_X.set_value(test_X_data)
+    vlb = validate()
+    tries = 0
+    while np.isnan(vlb) and tries < 5:
+        vlb = validate()
+        tries += 1
+        print "try",
+    print vlb

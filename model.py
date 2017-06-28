@@ -77,6 +77,10 @@ def build_encoder(P, input_size, hidden_size, latent_size):
         init_latent = U.theano_rng.normal(size=(X.shape[0], latent_size))
         init_z_mean = T.zeros_like(init_latent)
         init_z_std = T.ones_like(init_latent)
+
+        init_latent = T.patternbroadcast(init_latent, (False, False))
+        init_z_mean = T.patternbroadcast(init_z_mean, (False, False))
+        init_z_std = T.patternbroadcast(init_z_std, (False, False))
         eps_seq = U.theano_rng.normal(size=(step_count,
                                             X.shape[0],
                                             latent_size))
@@ -106,6 +110,10 @@ def build_encoder(P, input_size, hidden_size, latent_size):
                           init_z_mean,
                           init_z_std]
         )
+        z_means.name = 'z_means'
+        z_samples.name = 'z_samples'
+        z_stds.name = 'z_stds'
+
         return z_samples, z_means, z_stds, alphas
 
     return encode
